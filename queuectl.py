@@ -1,18 +1,3 @@
-#!/usr/bin/env python3
-"""
-queuectl - minimal background job queue CLI with workers, retries, DLQ, persistence.
-
-Usage examples (after making executable):
-  ./queuectl.py enqueue '{"id":"job1","command":"echo Hello; exit 0"}'
-  ./queuectl.py enqueue '{"id":"job2","command":"bash -c \"exit 1\"","max_retries":2}'
-  ./queuectl.py worker start --count 3
-  ./queuectl.py status
-  ./queuectl.py list --state pending
-  ./queuectl.py dlq list
-  ./queuectl.py dlq retry job2
-  ./queuectl.py config set max_retries 5
-"""
-
 import os
 import sys
 import json
@@ -62,7 +47,7 @@ def init_db():
         value TEXT
     )
     """)
-    # store default config if not present
+    
     for k,v in DEFAULT_CONFIG.items():
         cur.execute("INSERT OR IGNORE INTO config(key,value) VALUES (?,?)", (k, json.dumps(v)))
     conn.commit()
@@ -130,7 +115,7 @@ def claim_job_atomic():
     conn = get_conn()
     cur = conn.cursor()
     now_ts = int(time.time())
-    # Use a subquery to pick one eligible job, then update it.
+
     cur.execute("""
       UPDATE jobs SET
         state='processing',
@@ -147,7 +132,7 @@ def claim_job_atomic():
     if cur.rowcount == 0:
         conn.close()
         return None
-    # find the job we just moved to processing (attempts was incremented)
+    
     cur.execute("SELECT * FROM jobs WHERE state='processing' ORDER BY updated_at DESC LIMIT 1")
     row = cur.fetchone()
     conn.close()
@@ -166,7 +151,7 @@ def mark_job_failed_and_schedule(job_id, attempts, max_retries, last_error, back
     cur = conn.cursor()
     now = int(time.time())
     if attempts < max_retries:
-        # compute backoff delay = base ** attempts  (per spec)
+        
         delay = int(backoff_base ** attempts)
         next_run = now + delay
         cur.execute("""
@@ -174,7 +159,7 @@ def mark_job_failed_and_schedule(job_id, attempts, max_retries, last_error, back
           WHERE id=?
         """, (datetime.datetime.utcnow().isoformat()+"Z", next_run, last_error, job_id))
     else:
-        # move to dead
+       
         cur.execute("""
           UPDATE jobs SET state='dead', updated_at=?, last_error=?
           WHERE id=?
@@ -185,7 +170,7 @@ def mark_job_failed_and_schedule(job_id, attempts, max_retries, last_error, back
 def retry_dlq_job(job_id):
     conn = get_conn()
     cur = conn.cursor()
-    # reset attempts and next_run and state to pending
+    
     cur.execute("""
       UPDATE jobs SET state='pending', attempts=0, next_run=0, updated_at=? WHERE id=? AND state='dead'
     """, (datetime.datetime.utcnow().isoformat()+"Z", job_id))
@@ -201,7 +186,7 @@ def worker_loop(stop_event: Event):
     stop_event is an Event that is set for graceful shutdown.
     """
     backoff_base = get_config("backoff_base")
-    # convert to float/int
+  
     try:
         backoff_base = float(backoff_base)
     except:
@@ -210,7 +195,7 @@ def worker_loop(stop_event: Event):
     while not stop_event.is_set():
         job = claim_job_atomic()
         if not job:
-            # no job; sleep briefly
+            
             time.sleep(0.5)
             continue
 
@@ -221,8 +206,7 @@ def worker_loop(stop_event: Event):
         click.echo(f"[worker {os.getpid()}] claimed job={job_id} attempts={attempts}/{max_retries} cmd={cmd}")
 
         try:
-            # run the command -- use shell to allow commands like sleep, echo, bash -c etc.
-            # capture output; exit code determines success
+            
             proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             exit_code = proc.returncode
             if exit_code == 0:
@@ -262,16 +246,16 @@ class WorkerManager:
             click.echo("no workers running")
             return
         click.echo("stopping workers gracefully...")
-        # signal them to stop
+        
         self.stop_event.set()
-        # wait for children to exit
+        
         for p in self.procs:
             p.join(timeout=10)
             if p.is_alive():
                 click.echo(f"worker pid {p.pid} didn't exit, terminating")
                 p.terminate()
         self.procs = []
-        # reset event for future starts
+       
         self.stop_event = Event()
         click.echo("workers stopped")
 
@@ -309,7 +293,7 @@ def worker_start(count):
     if worker_manager is None:
         worker_manager = WorkerManager()
     worker_manager.start(count)
-    # Keep parent process alive to manage workers until user interrupts (Ctrl+C)
+    
     try:
         while True:
             time.sleep(1)
@@ -337,7 +321,7 @@ def status():
     click.echo("job states summary:")
     for s in ["pending", "processing", "completed", "failed", "dead"]:
         click.echo(f"  {s}: {summary.get(s,0)}")
-    # show active workers (only those started in this process)
+    
     active = worker_manager.procs if 'worker_manager' in globals() and worker_manager else []
     click.echo(f"active local worker processes: {len(active)}")
 
@@ -350,7 +334,7 @@ def list(state):
         click.echo("no jobs")
         return
     for r in rows:
-        # show key fields
+        
         click.echo(json.dumps({
             "id": r["id"],
             "command": r["command"],
@@ -438,3 +422,4 @@ def demo():
 
 if __name__ == "__main__":
     cli()
+
