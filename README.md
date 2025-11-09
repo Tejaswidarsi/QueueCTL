@@ -276,7 +276,74 @@ Each worker:
 </marquee>
 
 -----
+## 5. Testing Instructions
 
+#### 1. Enqueue 5 jobs: success, fail x3, sleep, spaces, and speech victory
+```
+python queuectl.py enqueue "{ `"id`": `"success`", `"command`": `"echo JOB SUCCESS`" }"
+python queuectl.py enqueue "{ `"id`": `"fail3`", `"command`": `"exit 1`", `"max_retries`": 3 }"
+python queuectl.py enqueue "{ `"id`": `"sleepy`", `"command`": `"powershell Start-Sleep 3; echo SLEPT`" }"
+python queuectl.py enqueue "{ `"id`": `"spaces`", `"command`": `"echo Hello with spaces and \"quotes\"!`" }"
+python queuectl.py enqueue "{ `"id`": `"VICTORY`", `"command`": `"powershell Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('Your queue passed all tests')`" }"
+```
+#### 2. Verify all 5 are pending
+```
+python queuectl.py list --state pending
+```
+#### 3. Start 3 workers
+```
+python queuectl.py worker start --count 3
+```
+#### 4. In another terminal, run this every 5 seconds to see retries + backoff
+```
+while ($true) { python queuectl.py list --state pending; python queuectl.py list --state processing; Start-Sleep 5; Clear-Host }
+```
+#### 5. _output_:
+```
+#    - success → completed instantly
+#    - fail3 → attempts: 1,2,3 → retry delays: 2s, 4s, 8s → DLQ
+#    - sleepy → runs after 3s → completed
+#    - spaces → runs perfectly
+#    - VICTORY → YOUR PC SPEAKS: "Your queue passed all tests"
+```
+#### 6. After 30 seconds, check DLQ
+```
+python queuectl.py dlq list
+```
+#### 7. Retry the dead job — watch it come back to life
+```
+python queuectl.py dlq retry fail3
+python queuectl.py list --state pending
+```
+#### 8. Change config LIVE (no restart!)
+```
+python queuectl.py config set max_retries 10
+python queuectl.py config set backoff_base 3
+python queuectl.py config get max_retries
+```
+#### 9. Enqueue new job — uses new config
+```
+python queuectl.py enqueue "{ `"id`": `"newconfig`", `"command`": `"exit 1`" }"
+```
+#### 10. Final proof: DB persists after restart
+```
+Close everything → reopen PowerShell → run:
+python queuectl.py status
+python queuectl.py list
+```
+#### ALL JOBS STILL THERE → PERSISTENCE PROVEN
+#### DLQ STILL HAS fail3 → DLQ PROVEN
+#### newconfig has max_retries=10 → CONFIG PROVEN
+
+#### 11. Graceful shutdown (press Ctrl+C in worker terminal)
+```
+#     You will see:
+#     parent received interrupt, stopping workers...
+#     [worker XXXX] graceful shutdown triggered.
+#     workers stopped
+```
+#### 12. NO ZOMBIE PROCESSES → CHECK TASK MANAGER → CLEAN
+----
 # Author
 _Tejaswi Darsi_
 _B.Tech CSE | Frontend & AI Enthusiast_
